@@ -1,4 +1,4 @@
-"""Minimal, deterministic supervisor skeleton for Milestone 1."""
+"""LangGraph supervisor and first deterministic profiling agent."""
 from __future__ import annotations
 
 from typing import Any, TypedDict
@@ -6,6 +6,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from datasage.ingestion import load_dataset
+from datasage.profiling import profile_dataset, profile_findings
 
 
 class InvestigationState(TypedDict, total=False):
@@ -15,6 +16,7 @@ class InvestigationState(TypedDict, total=False):
     prediction_context: str | None
     investigation_plan: list[str]
     completed_agents: list[str]
+    profiling_result: dict[str, Any]
     findings: list[dict[str, Any]]
     validation_results: list[dict[str, Any]]
     agent_errors: list[str]
@@ -28,18 +30,32 @@ def ingest(state: InvestigationState) -> InvestigationState:
 
 
 def plan(state: InvestigationState) -> InvestigationState:
-    # Agent implementations arrive in Milestones 2–4.
+    # Other agents remain planned but unimplemented.
     tasks = ["profiling"]
     if state.get("target_column") is not None:
         tasks.append("ml_risk")
     return {"investigation_plan": tasks, "status": "planned"}
 
 
+def profile(state: InvestigationState) -> InvestigationState:
+    frame, _ = load_dataset(state["dataset_path"])
+    summary = profile_dataset(frame)
+    findings = [item.model_dump(mode="json") for item in profile_findings(summary)]
+    return {
+        "profiling_result": summary,
+        "findings": findings,
+        "completed_agents": ["profiling"],
+        "status": "profiling_complete_unvalidated",
+    }
+
+
 def build_workflow():
     graph = StateGraph(InvestigationState)
     graph.add_node("ingest", ingest)
     graph.add_node("supervisor", plan)
+    graph.add_node("profiling", profile)
     graph.add_edge(START, "ingest")
     graph.add_edge("ingest", "supervisor")
-    graph.add_edge("supervisor", END)
+    graph.add_edge("supervisor", "profiling")
+    graph.add_edge("profiling", END)
     return graph.compile()
