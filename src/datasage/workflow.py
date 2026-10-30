@@ -1,4 +1,4 @@
-"""LangGraph supervisor and first deterministic profiling agent."""
+"""LangGraph orchestration of read-only diagnostics and evidence checks."""
 from __future__ import annotations
 
 from typing import Any, TypedDict
@@ -6,7 +6,10 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from datasage.ingestion import load_dataset
+from datasage.missingness import missingness_findings
+from datasage.models import Finding
 from datasage.profiling import profile_dataset, profile_findings
+from datasage.validation import validate_findings
 
 
 class InvestigationState(TypedDict, total=False):
@@ -30,10 +33,9 @@ def ingest(state: InvestigationState) -> InvestigationState:
 
 
 def plan(state: InvestigationState) -> InvestigationState:
-    # Other agents remain planned but unimplemented.
-    tasks = ["profiling"]
+    tasks = ["profiling", "missingness", "validation"]
     if state.get("target_column") is not None:
-        tasks.append("ml_risk")
+        tasks.append("ml_risk")  # planned, not yet implemented
     return {"investigation_plan": tasks, "status": "planned"}
 
 
@@ -42,10 +44,28 @@ def profile(state: InvestigationState) -> InvestigationState:
     summary = profile_dataset(frame)
     findings = [item.model_dump(mode="json") for item in profile_findings(summary)]
     return {
-        "profiling_result": summary,
-        "findings": findings,
-        "completed_agents": ["profiling"],
-        "status": "profiling_complete_unvalidated",
+        "profiling_result": summary, "findings": findings,
+        "completed_agents": ["profiling"], "status": "profiling_complete_unvalidated",
+    }
+
+
+def missingness(state: InvestigationState) -> InvestigationState:
+    frame, _ = load_dataset(state["dataset_path"])
+    new_findings = [f.model_dump(mode="json") for f in missingness_findings(frame)]
+    return {
+        "findings": state.get("findings", []) + new_findings,
+        "completed_agents": state.get("completed_agents", []) + ["missingness"],
+        "status": "missingness_complete_unvalidated",
+    }
+
+
+def validate(state: InvestigationState) -> InvestigationState:
+    frame, _ = load_dataset(state["dataset_path"])
+    findings = [Finding.model_validate(f) for f in state.get("findings", [])]
+    return {
+        "validation_results": validate_findings(frame, findings),
+        "completed_agents": state.get("completed_agents", []) + ["validation"],
+        "status": "validation_complete",
     }
 
 
@@ -54,8 +74,12 @@ def build_workflow():
     graph.add_node("ingest", ingest)
     graph.add_node("supervisor", plan)
     graph.add_node("profiling", profile)
+    graph.add_node("missingness", missingness)
+    graph.add_node("validation", validate)
     graph.add_edge(START, "ingest")
     graph.add_edge("ingest", "supervisor")
     graph.add_edge("supervisor", "profiling")
-    graph.add_edge("profiling", END)
+    graph.add_edge("profiling", "missingness")
+    graph.add_edge("missingness", "validation")
+    graph.add_edge("validation", END)
     return graph.compile()
