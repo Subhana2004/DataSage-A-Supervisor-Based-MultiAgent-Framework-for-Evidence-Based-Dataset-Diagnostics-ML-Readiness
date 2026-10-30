@@ -5,6 +5,7 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from datasage.anomaly import anomaly_findings
 from datasage.ingestion import load_dataset
 from datasage.missingness import missingness_findings
 from datasage.models import Finding
@@ -33,7 +34,7 @@ def ingest(state: InvestigationState) -> InvestigationState:
 
 
 def plan(state: InvestigationState) -> InvestigationState:
-    tasks = ["profiling", "missingness", "validation"]
+    tasks = ["profiling", "missingness", "anomaly", "validation"]
     if state.get("target_column") is not None:
         tasks.append("ml_risk")  # planned, not yet implemented
     return {"investigation_plan": tasks, "status": "planned"}
@@ -59,6 +60,16 @@ def missingness(state: InvestigationState) -> InvestigationState:
     }
 
 
+def anomaly(state: InvestigationState) -> InvestigationState:
+    frame, _ = load_dataset(state["dataset_path"])
+    new_findings = [f.model_dump(mode="json") for f in anomaly_findings(frame)]
+    return {
+        "findings": state.get("findings", []) + new_findings,
+        "completed_agents": state.get("completed_agents", []) + ["anomaly"],
+        "status": "anomaly_complete_unvalidated",
+    }
+
+
 def validate(state: InvestigationState) -> InvestigationState:
     frame, _ = load_dataset(state["dataset_path"])
     findings = [Finding.model_validate(f) for f in state.get("findings", [])]
@@ -75,11 +86,13 @@ def build_workflow():
     graph.add_node("supervisor", plan)
     graph.add_node("profiling", profile)
     graph.add_node("missingness", missingness)
+    graph.add_node("anomaly", anomaly)
     graph.add_node("validation", validate)
     graph.add_edge(START, "ingest")
     graph.add_edge("ingest", "supervisor")
     graph.add_edge("supervisor", "profiling")
     graph.add_edge("profiling", "missingness")
-    graph.add_edge("missingness", "validation")
+    graph.add_edge("missingness", "anomaly")
+    graph.add_edge("anomaly", "validation")
     graph.add_edge("validation", END)
     return graph.compile()
