@@ -7,7 +7,7 @@ name = "datasage"
 version = "0.1.0"
 description = "Evidence-based dataset diagnostics with a supervisor workflow"
 requires-python = ">=3.10"
-dependencies = ["pandas>=2.0", "pydantic>=2.0", "langgraph>=0.2", "openpyxl>=3.1", "pyarrow>=14"]
+dependencies = ["pandas>=2.0", "pydantic>=2.0", "langgraph>=0.2", "openpyxl>=3.1", "pyarrow>=14", "scipy>=1.11"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
