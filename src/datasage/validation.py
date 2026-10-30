@@ -10,6 +10,7 @@ import pandas as pd
 from scipy.stats import chi2_contingency
 
 from datasage.anomaly import outlier_summary
+from datasage.distribution import distribution_findings
 from datasage.models import Finding
 
 
@@ -23,6 +24,32 @@ def validate_findings(frame: pd.DataFrame, findings: list[Finding]) -> list[dict
         metrics = evidence.metrics
         if finding.finding_id in seen:
             verdict, reason = "rejected", "Duplicate finding ID"
+        elif evidence.method in ("categorical_frequency_ratio", "pandas_sample_skew"):
+            if column not in frame.columns or not frame.columns.is_unique:
+                verdict, reason = "rejected", "Column missing or ambiguous"
+            else:
+                # Recompute from raw data with the same descriptive method.
+                # Target status changes category labels, not the numerical evidence.
+                reference = distribution_findings(frame, column if finding.category == "class_imbalance" else None)
+                match = next((f for f in reference if f.column == column
+                    and f.evidence.method == evidence.method), None)
+                valid = match is not None and evidence.sample_size == match.evidence.sample_size
+                if valid:
+                    expected = match.evidence.metrics
+                    valid = metrics.keys() == expected.keys()
+                    if valid:
+                        for key, value in expected.items():
+                            received = metrics[key]
+                            if isinstance(value, (int, float)):
+                                if not isinstance(received, (int, float)) or not math.isclose(
+                                        float(received), float(value), rel_tol=1e-10, abs_tol=1e-8):
+                                    valid = False
+                                    break
+                            elif received != value:
+                                valid = False
+                                break
+                verdict = "verified" if valid else "rejected"
+                reason = "Distribution evidence recomputed" if valid else "Distribution evidence inconsistent"
         elif evidence.method == "tukey_iqr_1_5":
             if column not in frame.columns or not frame.columns.is_unique:
                 verdict, reason = "rejected", "Column missing or ambiguous"
