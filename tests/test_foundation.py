@@ -46,8 +46,8 @@ def test_supervisor_executes_profiling_and_validation(tmp_path: Path):
     pd.DataFrame({"x": [1], "y": [0]}).to_csv(path, index=False)
     result = build_workflow().invoke({"dataset_path": str(path), "target_column": "y"})
     assert result["status"] == "validation_complete"
-    assert result["investigation_plan"] == ["profiling", "missingness", "anomaly", "validation", "ml_risk"]
-    assert result["completed_agents"] == ["profiling", "missingness", "anomaly", "validation"]
+    assert result["investigation_plan"] == ["profiling", "missingness", "anomaly", "distribution", "validation", "ml_risk"]
+    assert result["completed_agents"] == ["profiling", "missingness", "anomaly", "distribution", "validation"]
     assert result["dataset_metadata"]["rows"] == 1
     assert result["profiling_result"]["rows"] == 1
     assert "ml_risk" not in result["completed_agents"]
