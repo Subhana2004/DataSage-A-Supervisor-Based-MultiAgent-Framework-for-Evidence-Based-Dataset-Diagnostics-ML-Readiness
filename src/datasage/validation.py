@@ -9,6 +9,7 @@ import math
 import pandas as pd
 from scipy.stats import chi2_contingency
 
+from datasage.anomaly import outlier_summary
 from datasage.models import Finding
 
 
@@ -22,6 +23,21 @@ def validate_findings(frame: pd.DataFrame, findings: list[Finding]) -> list[dict
         metrics = evidence.metrics
         if finding.finding_id in seen:
             verdict, reason = "rejected", "Duplicate finding ID"
+        elif evidence.method == "tukey_iqr_1_5":
+            if column not in frame.columns or not frame.columns.is_unique:
+                verdict, reason = "rejected", "Column missing or ambiguous"
+            else:
+                actual = outlier_summary(frame[column])
+                expected = None if actual is None else {k: v for k, v in actual.items() if k != "sample_size"}
+                valid = actual is not None and actual["count"] > 0 and evidence.sample_size == actual["sample_size"]
+                if valid:
+                    for key, value in expected.items():
+                        received = metrics.get(key)
+                        if not isinstance(received, (int, float)) or not math.isfinite(float(received)) or not math.isclose(float(received), float(value), rel_tol=1e-10, abs_tol=1e-8):
+                            valid = False
+                            break
+                verdict = "verified" if valid else "rejected"
+                reason = "IQR fences and counts recomputed" if valid else "Outlier evidence inconsistent"
         elif evidence.method == "pandas_isna_count":
             if column not in frame.columns:
                 verdict, reason = "rejected", "Column absent"
