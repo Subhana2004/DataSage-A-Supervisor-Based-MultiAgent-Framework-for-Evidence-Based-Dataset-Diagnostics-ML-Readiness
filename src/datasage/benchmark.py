@@ -16,17 +16,23 @@ from datasage.workflow import build_workflow
 
 def benchmark_cases() -> list[tuple[str, pd.DataFrame, str | None, set[tuple[str, str]]]]:
     """Fixed, explicitly labeled cases. Keys are (category, column)."""
-    base = pd.DataFrame({"value": [float(i % 17) for i in range(100)],
+    base = pd.DataFrame({"row_number": list(range(100)),
+                         "value": [float(i % 17) for i in range(100)],
                          "group": ["a", "b"] * 50})
     missing = base.copy()
     missing.loc[0:24, "value"] = float("nan")
     duplicates = base.copy()
     duplicates.loc[50:59] = duplicates.loc[0:9].to_numpy()
-    outliers = pd.DataFrame({"value": list(range(99)) + [10000.0]})
-    imbalance = pd.DataFrame({"target": ["majority"] * 90 + ["minority"] * 10})
-    proxy = pd.DataFrame({"target": [i % 2 for i in range(100)],
+    outliers = pd.DataFrame({"row_number": list(range(100)), "value": list(range(99)) + [10000.0]})
+    imbalance = pd.DataFrame({"row_number": list(range(100)), "target": ["majority"] * 90 + ["minority"] * 10})
+    proxy = pd.DataFrame({"row_number": list(range(100)), "target": [i % 2 for i in range(100)],
                           "outcome_copy": [i % 2 for i in range(100)]})
-    clean = pd.DataFrame({"group": ["a", "b"] * 50, "value": [i % 17 for i in range(100)]})
+    clean = pd.DataFrame({"group": ["a", "b"] * 50, "value": list(range(100))})
+    near_proxy = pd.DataFrame({"row_number": list(range(100)),
+                               "target": [i % 2 for i in range(100)],
+                               "proxy": [(i % 2) if i >= 5 else (1 - i % 2) for i in range(100)]})
+    id_name_only = pd.DataFrame({"customer_id": [f"grp{i % 5}" for i in range(100)],
+                                 "value": list(range(100))})
     return [
         ("missing", missing, None, {("missing_data", "value")}),
         ("duplicates", duplicates, None, {("duplicate_rows", "")}),
@@ -34,6 +40,8 @@ def benchmark_cases() -> list[tuple[str, pd.DataFrame, str | None, set[tuple[str
         ("imbalance", imbalance, "target", {("class_imbalance", "target")}),
         ("target_proxy", proxy, "target", {("target_proxy_candidate", "outcome_copy")}),
         ("clean", clean, None, set()),
+        ("near_proxy_not_identical", near_proxy, "target", set()),
+        ("id_named_not_unique", id_name_only, None, set()),
     ]
 
 
@@ -74,8 +82,8 @@ def score_benchmark() -> dict:
             })
     tp, fp, fn = totals["tp"], totals["fp"], totals["fn"]
     return {
-        "benchmark_version": "0.1",
-        "scope": "Six small deterministic synthetic scenarios; evidence-verified retrieval only",
+        "benchmark_version": "0.2",
+        "scope": "Eight deterministic synthetic scenarios, including near-miss controls; evidence-verified retrieval only",
         "totals": totals,
         "precision": tp / (tp + fp) if tp + fp else None,
         "recall": tp / (tp + fn) if tp + fn else None,
