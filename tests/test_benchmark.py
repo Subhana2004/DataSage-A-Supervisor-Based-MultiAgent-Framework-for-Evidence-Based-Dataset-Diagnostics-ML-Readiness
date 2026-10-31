@@ -14,7 +14,7 @@ def test_score_is_deterministic_and_serializable():
     left = score_benchmark()
     right = score_benchmark()
     assert left == right
-    assert len(left["cases"]) == 6
+    assert len(left["cases"]) == 8
     assert left["totals"]["tp"] >= 0
     assert left["totals"]["fp"] >= 0
     assert left["totals"]["fn"] >= 0
