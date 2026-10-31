@@ -81,7 +81,8 @@ def main() -> None:
     c1.metric("Rows", metadata.rows)
     c2.metric("Columns", metadata.columns)
     st.dataframe(preview.head(20), use_container_width=True)
-    target = st.selectbox("Prediction target (optional)", [None] + columns,\n                          format_func=lambda value: "(No target)" if value is None else str(value))
+    target = st.selectbox("Prediction target (optional)", [None] + columns,
+                          format_func=lambda value: "(No target)" if value is None else str(value))
     context = st.text_area("Prediction context (optional)",
                            placeholder="Describe what is known at prediction time.")
     # Without user action, do not run repeated computations on each filter change.
