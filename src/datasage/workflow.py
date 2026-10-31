@@ -9,6 +9,7 @@ from datasage.anomaly import anomaly_findings
 from datasage.distribution import distribution_findings
 from datasage.ingestion import load_dataset
 from datasage.missingness import missingness_findings
+from datasage.ml_risk import ml_risk_findings
 from datasage.models import Finding
 from datasage.profiling import profile_dataset, profile_findings
 from datasage.validation import validate_findings
@@ -35,9 +36,10 @@ def ingest(state: InvestigationState) -> InvestigationState:
 
 
 def plan(state: InvestigationState) -> InvestigationState:
-    tasks = ["profiling", "missingness", "anomaly", "distribution", "validation"]
+    tasks = ["profiling", "missingness", "anomaly", "distribution"]
     if state.get("target_column") is not None:
-        tasks.append("ml_risk")  # planned, not yet implemented
+        tasks.append("ml_risk")
+    tasks.append("validation")
     return {"investigation_plan": tasks, "status": "planned"}
 
 
@@ -81,6 +83,21 @@ def distribution(state: InvestigationState) -> InvestigationState:
     }
 
 
+def ml_risk(state: InvestigationState) -> InvestigationState:
+    frame, _ = load_dataset(state["dataset_path"])
+    findings = [f.model_dump(mode="json") for f in ml_risk_findings(
+        frame, state["target_column"], state.get("prediction_context"))]
+    return {
+        "findings": state.get("findings", []) + findings,
+        "completed_agents": state.get("completed_agents", []) + ["ml_risk"],
+        "status": "ml_risk_complete_unvalidated",
+    }
+
+
+def route_risk(state: InvestigationState) -> str:
+    return "ml_risk" if state.get("target_column") is not None else "validation"
+
+
 def validate(state: InvestigationState) -> InvestigationState:
     frame, _ = load_dataset(state["dataset_path"])
     findings = [Finding.model_validate(f) for f in state.get("findings", [])]
@@ -99,6 +116,7 @@ def build_workflow():
     graph.add_node("missingness", missingness)
     graph.add_node("anomaly", anomaly)
     graph.add_node("distribution", distribution)
+    graph.add_node("ml_risk", ml_risk)
     graph.add_node("validation", validate)
     graph.add_edge(START, "ingest")
     graph.add_edge("ingest", "supervisor")
@@ -106,6 +124,7 @@ def build_workflow():
     graph.add_edge("profiling", "missingness")
     graph.add_edge("missingness", "anomaly")
     graph.add_edge("anomaly", "distribution")
-    graph.add_edge("distribution", "validation")
+    graph.add_conditional_edges("distribution", route_risk)
+    graph.add_edge("ml_risk", "validation")
     graph.add_edge("validation", END)
     return graph.compile()
