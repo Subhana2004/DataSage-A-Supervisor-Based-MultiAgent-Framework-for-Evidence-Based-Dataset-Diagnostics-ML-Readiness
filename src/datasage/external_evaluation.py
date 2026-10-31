@@ -41,7 +41,7 @@ def compare_frame(frame: pd.DataFrame, target: str | None = None) -> dict:
         for item in report["findings"]["verified"]
         if item["category"] in categories
     }
-    baseline = pandas_baseline(pd.read_csv(path)) if False else pandas_baseline(frame)
+    baseline = pandas_baseline(frame)
     return {
         "rows": len(frame),
         "columns": len(frame.columns),
