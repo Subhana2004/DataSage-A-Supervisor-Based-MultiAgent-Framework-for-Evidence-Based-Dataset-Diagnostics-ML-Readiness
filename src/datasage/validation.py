@@ -12,6 +12,7 @@ from scipy.stats import chi2_contingency
 from datasage.anomaly import outlier_summary
 from datasage.distribution import distribution_findings
 from datasage.models import Finding
+from datasage.ml_risk import ml_risk_findings
 
 
 def validate_findings(frame: pd.DataFrame, findings: list[Finding]) -> list[dict[str, str]]:
@@ -24,6 +25,22 @@ def validate_findings(frame: pd.DataFrame, findings: list[Finding]) -> list[dict
         metrics = evidence.metrics
         if finding.finding_id in seen:
             verdict, reason = "rejected", "Duplicate finding ID"
+        elif evidence.method in ("identifier_name_uniqueness", "paired_target_agreement"):
+            if column not in frame.columns or not frame.columns.is_unique:
+                verdict, reason = "rejected", "Feature column missing or ambiguous"
+            else:
+                possible = []
+                for target_name in frame.columns:
+                    if target_name == column:
+                        continue
+                    candidates = ml_risk_findings(frame, target_name)
+                    possible.extend(f for f in candidates if f.column == column
+                                    and f.evidence.method == evidence.method)
+                valid = any(f.evidence.sample_size == evidence.sample_size
+                            and f.evidence.metrics == metrics and f.category == finding.category
+                            for f in possible)
+                verdict = "verified" if valid else "rejected"
+                reason = "ML-risk evidence recomputed" if valid else "ML-risk evidence inconsistent"
         elif evidence.method in ("categorical_frequency_ratio", "pandas_sample_skew"):
             if column not in frame.columns or not frame.columns.is_unique:
                 verdict, reason = "rejected", "Column missing or ambiguous"
