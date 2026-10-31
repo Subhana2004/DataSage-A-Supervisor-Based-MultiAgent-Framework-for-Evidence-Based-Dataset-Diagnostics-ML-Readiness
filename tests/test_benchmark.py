@@ -5,7 +5,7 @@ from datasage.benchmark import benchmark_cases, observed_keys, score_benchmark
 
 def test_cases_have_explicit_unique_names():
     cases = benchmark_cases()
-    assert len(cases) == 6
+    assert len(cases) == 8
     assert len({x[0] for x in cases}) == len(cases)
     assert not next(x for x in cases if x[0] == "clean")[3]
 
