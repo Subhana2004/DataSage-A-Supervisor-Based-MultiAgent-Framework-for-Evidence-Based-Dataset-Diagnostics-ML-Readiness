@@ -47,7 +47,7 @@ def test_supervisor_executes_profiling_and_validation(tmp_path: Path):
     result = build_workflow().invoke({"dataset_path": str(path), "target_column": "y"})
     assert result["status"] == "report_complete"
     assert result["investigation_plan"] == ["profiling", "missingness", "anomaly", "distribution", "ml_risk", "validation", "reporting"]
-    assert result["completed_agents"] == ["profiling", "missingness", "anomaly", "distribution", "ml_risk", "validation"]
+    assert result["completed_agents"] == ["profiling", "missingness", "anomaly", "distribution", "ml_risk", "validation", "reporting"]
     assert result["dataset_metadata"]["rows"] == 1
     assert result["profiling_result"]["rows"] == 1
     assert "ml_risk" in result["completed_agents"]
