@@ -13,6 +13,7 @@ from datasage.anomaly import outlier_summary
 from datasage.distribution import distribution_findings
 from datasage.models import Finding
 from datasage.ml_risk import ml_risk_findings
+from datasage.missingness import missingness_findings
 
 
 def validate_findings(frame: pd.DataFrame, findings: list[Finding]) -> list[dict[str, str]]:
@@ -25,6 +26,33 @@ def validate_findings(frame: pd.DataFrame, findings: list[Finding]) -> list[dict
         metrics = evidence.metrics
         if finding.finding_id in seen:
             verdict, reason = "rejected", "Duplicate finding ID"
+        elif evidence.method == "pandas_dataframe_duplicated":
+            count = int(frame.duplicated().sum()) if len(frame.columns) else 0
+            percent = round(100 * count / len(frame), 2) if len(frame) else None
+            valid = (finding.category == "duplicate_rows" and count > 0
+                     and evidence.sample_size == len(frame)
+                     and type(metrics.get("duplicate_rows")) is int
+                     and metrics["duplicate_rows"] == count
+                     and type(metrics.get("percentage")) in (float, int)
+                     and metrics["percentage"] == percent)
+            verdict = "verified" if valid else "rejected"
+            reason = "Duplicate-row counts independently recomputed" if valid else "Duplicate-row evidence inconsistent"
+        elif evidence.method == "pandas_series_nunique":
+            if column not in frame.columns or not frame.columns.is_unique:
+                verdict, reason = "rejected", "Column absent or ambiguous"
+            else:
+                series = frame[column]
+                unique = int(series.nunique(dropna=True))
+                non_null = int(series.notna().sum())
+                nulls = int(series.isna().sum())
+                valid = (finding.category == "constant_feature" and non_null > 0 and unique == 1
+                         and evidence.sample_size == non_null
+                         and type(metrics.get("unique_non_null")) is int
+                         and metrics["unique_non_null"] == unique
+                         and type(metrics.get("null_count")) is int
+                         and metrics["null_count"] == nulls)
+                verdict = "verified" if valid else "rejected"
+                reason = "Non-null uniqueness independently recomputed" if valid else "Constant-column evidence inconsistent"
         elif evidence.method in ("identifier_name_uniqueness", "paired_target_agreement"):
             if column not in frame.columns or not frame.columns.is_unique:
                 verdict, reason = "rejected", "Feature column missing or ambiguous"
@@ -98,30 +126,30 @@ def validate_findings(frame: pd.DataFrame, findings: list[Finding]) -> list[dict
                 verdict = "verified" if valid else "rejected"
                 reason = "Missing counts recomputed" if valid else "Missing counts or percentage inconsistent"
         elif evidence.method == "chi_square_independence_bh":
-            other = metrics.get("other_column")
-            if column not in frame.columns or other not in frame.columns or column == other:
-                verdict, reason = "rejected", "Invalid referenced columns"
-            else:
-                observed = frame[other].notna()
-                tab = pd.crosstab(frame.loc[observed, other], frame.loc[observed, column].isna())
-                if tab.shape[0] < 2 or tab.shape[1] != 2:
-                    verdict, reason = "rejected", "Invalid contingency table"
-                else:
-                    try:
-                        _, p, _, expected = chi2_contingency(tab, correction=False)
-                        valid = (
-                            (expected >= 5).all()
-                            and evidence.sample_size == int(observed.sum())
-                            and metrics.get("contingency_counts") == tab.astype(int).values.tolist()
-                            and isinstance(metrics.get("p_value"), (float, int))
-                            and math.isclose(float(metrics["p_value"]), float(p), abs_tol=1e-10)
-                            and isinstance(metrics.get("adjusted_p_value"), (float, int))
-                            and float(p) <= float(metrics["adjusted_p_value"]) <= 1.0
-                        )
-                        verdict = "verified" if valid else "rejected"
-                        reason = "Association calculation recomputed" if valid else "Association evidence inconsistent"
-                    except ValueError:
-                        verdict, reason = "rejected", "Statistical assumptions unmet"
+            # Rebuild the entire eligible hypothesis family, not merely one p-value.
+            # This independently checks its multiplicity and BH-adjusted p-value.
+            reference = [
+                item for item in missingness_findings(frame)
+                if item.evidence.method == "chi_square_independence_bh"
+                and item.column == column
+                and item.evidence.metrics.get("other_column") == metrics.get("other_column")
+            ]
+            valid = (len(reference) == 1 and finding.category == "missingness_association"
+                     and evidence.sample_size == reference[0].evidence.sample_size
+                     and metrics.keys() == reference[0].evidence.metrics.keys()) if reference else False
+            if valid:
+                for key, expected in reference[0].evidence.metrics.items():
+                    received = metrics[key]
+                    if isinstance(expected, float):
+                        if type(received) not in (int, float) or not math.isfinite(float(received)) or not math.isclose(
+                                float(received), expected, rel_tol=1e-10, abs_tol=1e-12):
+                            valid = False
+                            break
+                    elif received != expected:
+                        valid = False
+                        break
+            verdict = "verified" if valid else "rejected"
+            reason = "Full BH hypothesis-family adjustment recomputed" if valid else "BH association evidence inconsistent"
         outcomes.append({"finding_id": finding.finding_id, "status": verdict, "reason": reason})
         seen.add(finding.finding_id)
     return outcomes

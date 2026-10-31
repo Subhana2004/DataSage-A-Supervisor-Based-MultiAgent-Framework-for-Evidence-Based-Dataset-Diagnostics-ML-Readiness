@@ -52,4 +52,4 @@ def test_workflow_produces_report(tmp_path):
     result = build_workflow().invoke({"dataset_path": str(path)})
     assert result["status"] == "report_complete"
     assert result["final_report"]["report_version"] == "1.0"
-    assert result["final_report"]["summary"]["not_verified"] >= 1
+    assert result["final_report"]["summary"]["verified"] >= 1
