@@ -52,7 +52,7 @@ def test_workflow_includes_validation(tmp_path):
     path = tmp_path / "sample.csv"
     make_frame().to_csv(path, index=False)
     result = build_workflow().invoke({"dataset_path": str(path)})
-    assert result["status"] == "validation_complete"
+    assert result["status"] == "report_complete"
     assert "missingness" in result["completed_agents"]
     assert "validation" in result["completed_agents"]
     assert any(x["status"] == "verified" for x in result["validation_results"])

@@ -12,6 +12,7 @@ from datasage.missingness import missingness_findings
 from datasage.ml_risk import ml_risk_findings
 from datasage.models import Finding
 from datasage.profiling import profile_dataset, profile_findings
+from datasage.reporting import reconcile
 from datasage.validation import validate_findings
 
 
@@ -39,7 +40,7 @@ def plan(state: InvestigationState) -> InvestigationState:
     tasks = ["profiling", "missingness", "anomaly", "distribution"]
     if state.get("target_column") is not None:
         tasks.append("ml_risk")
-    tasks.append("validation")
+    tasks.extend(["validation", "reporting"])
     return {"investigation_plan": tasks, "status": "planned"}
 
 
@@ -108,6 +109,17 @@ def validate(state: InvestigationState) -> InvestigationState:
     }
 
 
+def report(state: InvestigationState) -> InvestigationState:
+    findings = [Finding.model_validate(f) for f in state.get("findings", [])]
+    output = reconcile(findings, state.get("validation_results", []),
+                       state.get("dataset_metadata"))
+    return {
+        "final_report": output,
+        "completed_agents": state.get("completed_agents", []) + ["reporting"],
+        "status": "report_complete",
+    }
+
+
 def build_workflow():
     graph = StateGraph(InvestigationState)
     graph.add_node("ingest", ingest)
@@ -118,6 +130,7 @@ def build_workflow():
     graph.add_node("distribution", distribution)
     graph.add_node("ml_risk", ml_risk)
     graph.add_node("validation", validate)
+    graph.add_node("reporting", report)
     graph.add_edge(START, "ingest")
     graph.add_edge("ingest", "supervisor")
     graph.add_edge("supervisor", "profiling")
@@ -126,5 +139,6 @@ def build_workflow():
     graph.add_edge("anomaly", "distribution")
     graph.add_conditional_edges("distribution", route_risk)
     graph.add_edge("ml_risk", "validation")
-    graph.add_edge("validation", END)
+    graph.add_edge("validation", "reporting")
+    graph.add_edge("reporting", END)
     return graph.compile()
