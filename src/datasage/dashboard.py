@@ -81,20 +81,20 @@ def main() -> None:
     c1.metric("Rows", metadata.rows)
     c2.metric("Columns", metadata.columns)
     st.dataframe(preview.head(20), use_container_width=True)
-    target = st.selectbox("Prediction target (optional)", ["None"] + columns)
+    target = st.selectbox("Prediction target (optional)", [None] + columns,\n                          format_func=lambda value: "(No target)" if value is None else str(value))
     context = st.text_area("Prediction context (optional)",
                            placeholder="Describe what is known at prediction time.")
     # Without user action, do not run repeated computations on each filter change.
     if st.button("Run diagnostics", type="primary"):
         try:
             report = analyze_upload(raw, uploaded.name,
-                                    None if target == "None" else target, context)
+                                    target, context)
             st.session_state["datasage_report"] = report
-            st.session_state["datasage_file"] = (uploaded.name, metadata.fingerprint)
+            st.session_state["datasage_file"] = (uploaded.name, metadata.fingerprint, target, context)
         except (ValueError, OSError, UnicodeError, KeyError, TypeError) as exc:
             st.error(f"Analysis failed: {exc}")
             return
-    if st.session_state.get("datasage_file") != (uploaded.name, metadata.fingerprint):
+    if st.session_state.get("datasage_file") != (uploaded.name, metadata.fingerprint, target, context):
         st.info("Run diagnostics to view findings for this dataset.")
         return
     report = st.session_state.get("datasage_report")
