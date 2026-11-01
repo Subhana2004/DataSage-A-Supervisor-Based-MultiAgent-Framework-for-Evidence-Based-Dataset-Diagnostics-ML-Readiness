@@ -9,6 +9,8 @@ import os
 from pathlib import Path
 import tempfile
 
+import pandas as pd
+
 from datasage.ingestion import MAX_BYTES, SUPPORTED, load_dataset
 from datasage.explanations import explain_finding, overall_summary
 from datasage.history_store import save_investigation, list_investigations
@@ -54,7 +56,15 @@ def filter_findings(report: dict, statuses: list[str] | None = None,
 def main() -> None:
     import streamlit as st
 
-    st.set_page_config(page_title="DataSage", page_icon="🔎", layout="wide")
+    st.set_page_config(page_title="DataSage | Dataset Health Studio", page_icon="🔎", layout="wide")
+    st.markdown("""
+    <style>
+      .block-container {max-width:1180px; padding-top:1.7rem; padding-bottom:3.5rem}
+      [data-testid="stMetric"] {background:rgba(105,145,185,.10);padding:18px;border-radius:16px;border:1px solid rgba(140,160,185,.17)}
+      div[data-testid="stExpander"] {border-radius:14px;border:1px solid rgba(140,160,185,.25)}
+      .stButton button[kind="primary"] {border-radius:11px;font-weight:700;padding:0.65rem 1.1rem}
+    </style>
+    """, unsafe_allow_html=True)
     st.title("DataSage | Dataset Health Studio")
     st.caption("Evidence-based dataset diagnostics · statistical evidence is not proof of a dataset defect.")
     uploaded = st.file_uploader("Upload CSV, XLSX or Parquet (max 50 MiB)",
@@ -87,6 +97,7 @@ def main() -> None:
     st.dataframe(preview.head(20), use_container_width=True)
     target = st.selectbox("Prediction target (optional)", [None] + columns,
                           format_func=lambda value: "(No target)" if value is None else str(value))
+    st.caption("Selecting a target activates limited additional checks; it does not guarantee more findings.")
     context = st.text_area("Prediction context (optional)",
                            placeholder="Describe what is known at prediction time.")
     # Without user action, do not run repeated computations on each filter change.
@@ -123,7 +134,8 @@ def main() -> None:
             category_counts[label] = category_counts.get(label, 0) + 1
     if category_counts:
         st.subheader("Types of observations")
-        st.bar_chart(category_counts)
+        chart = pd.DataFrame({"Finding type": list(category_counts), "Count": list(category_counts.values())})
+        st.bar_chart(chart.set_index("Finding type"))
     st.subheader("Diagnostic report")
     cols = st.columns(3)
     for col, status in zip(cols, ("verified", "rejected", "not_verified")):
