@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from datasage.models import Finding
+from datasage.explanations import explain_finding, overall_summary
 
 STATUSES = ("verified", "rejected", "not_verified")
 
@@ -59,18 +60,28 @@ def write_json_report(report: dict[str, Any], destination: str | Path) -> Path:
 def render_html(report: dict[str, Any]) -> str:
     """Render report as static HTML with escaped untrusted dataset content."""
     parts = ["<!doctype html><html lang='en'><head><meta charset='utf-8'>",
-             "<title>DataSage diagnostic report</title></head><body>",
-             "<h1>DataSage diagnostic report</h1>"]
+             "<title>DataSage diagnostic report</title>",
+             "<style>body{font-family:system-ui,sans-serif;max-width:900px;margin:3rem auto;line-height:1.6;padding:0 1.25rem;color:#183049}h1{color:#173c68}li{background:#f4f7fb;border-radius:12px;padding:16px;margin:12px 0}small{color:#556}h2{margin-top:2rem}</style>",
+             "</head><body><h1>DataSage · Diagnostic Report</h1>",
+             "<p><strong>Interpretation:</strong> evidence-backed observations, not certified dataset defects.</p>"]
     summary = report["summary"]
     parts.append("<p>" + " · ".join(
         f"{escape(key)}: {int(summary[key])}" for key in STATUSES) + "</p>")
+    parts.append(f"<p>{escape(overall_summary(report))}</p>")
     for status in STATUSES:
         parts.append(f"<h2>{escape(status.replace('_', ' ').title())}</h2><ul>")
         for item in report["findings"][status]:
             title = escape(str(item["title"]))
             column = escape(str(item.get("column") or "dataset"))
             reason = escape(str(item["validation_reason"]))
-            parts.append(f"<li><strong>{title}</strong> ({column}): {reason}</li>")
+            summary = explain_finding(item)
+            parts.append(
+                f"<li><strong>{title}</strong> <small>({column})</small>"
+                f"<p><b>What we observed:</b> {escape(summary['observation'])}</p>"
+                f"<p><b>What it means:</b> {escape(summary['meaning'])}</p>"
+                f"<p><b>What to check next:</b> {escape(summary['next_step'])}</p>"
+                f"<small>Evidence validation: {reason}</small></li>"
+            )
         parts.append("</ul>")
     parts.append("<h2>Limitations</h2><ul>")
     for limitation in report["limitations"]:
