@@ -5,11 +5,14 @@ Uploaded files are handled in temporary storage and deleted after analysis.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import tempfile
 
 from datasage.ingestion import MAX_BYTES, SUPPORTED, load_dataset
 from datasage.explanations import explain_finding, overall_summary
+from datasage.history_store import save_investigation, list_investigations
+from datasage.llm_explanations import explain_with_llm
 from datasage.reporting import render_html
 from datasage.workflow import build_workflow
 
@@ -142,6 +145,15 @@ def main() -> None:
             st.markdown("**What to check next**")
             st.write(explanation["next_step"])
             st.caption(f"Status: {item['validation_status']} · Severity: {item['severity']} · Confidence: {item['confidence']}")
+            if os.getenv("OPENAI_API_KEY"):
+                if st.button("Generate optional AI explanation", key=f"llm-{metadata.fingerprint}-{target}-{item['finding_id']}"):
+                    try:
+                        st.session_state[f"llm_text_{metadata.fingerprint}_{target}_{item['finding_id']}"] = explain_with_llm(item)
+                    except (ValueError, ImportError, RuntimeError, OSError) as exc:
+                        st.error(f"AI explanation unavailable: {exc}")
+                generated = st.session_state.get(f"llm_text_{metadata.fingerprint}_{target}_{item['finding_id']}")
+                if generated:
+                    st.info("AI-generated interpretation (not independently verified): " + generated)
             with st.expander("Technical details (optional)"):
                 st.json(item["evidence"])
                 st.write("Validation:", item["validation_reason"])
@@ -152,6 +164,22 @@ def main() -> None:
         with st.expander(f"Run {index + 1} · {entry['file']} · Target: {entry['target']}"):
             st.write(overall_summary(entry["report"]))
             st.caption(f"Dataset fingerprint: {entry['fingerprint'][:16]}…")
+    st.markdown("**Save an investigation permanently (local device only)**")
+    st.caption("Opt-in: saves report metadata, findings and metrics to your computer, not the raw dataset. Do not use on shared machines with confidential data.")
+    if st.button("Save this report on my computer"):
+        try:
+            save_investigation(report, uploaded.name, target)
+            st.success("Saved locally. You can reopen it under Saved investigations.")
+        except (ValueError, OSError, TypeError) as exc:
+            st.error(f"Save failed: {exc}")
+    if st.checkbox("Show saved investigations"):
+        for record in list_investigations():
+            with st.expander(f"{record['saved_at_utc'][:16]} · {record['source_filename']} · {record['target'] or '(No target)'}"):
+                st.write(overall_summary(record["report"]))
+                st.download_button("Download this saved report",
+                    data=json.dumps(record["report"], indent=2, ensure_ascii=False),
+                    file_name=f"datasage-saved-{record['id']}.json", mime="application/json",
+                    key=f"saved-{record['id']}")
     st.subheader("4 · Export")
     st.caption("Read the HTML report, or export JSON for reproducibility.")
     st.download_button("Download JSON report",
