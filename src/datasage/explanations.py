@@ -16,7 +16,7 @@ def explain_finding(item: dict) -> dict[str, str]:
     elif category == "missing_data":
         count = metrics.get("missing_count", "?")
         percent = metrics.get("missing_percentage", "?")
-        fact = f"{column} has {count} missing values ({float(percent):.1f}% if the figure is available)." if isinstance(percent, (int, float)) else f"{column} has {count} missing values."
+        fact = f"{column} has {count} missing values ({float(percent):.1f}%)." if isinstance(percent, (int, float)) else f"{column} has {count} missing values."
         meaning = "The reason for missing values is not established by counting them."
         next_step = "Review how this field was collected before choosing an imputation strategy."
     elif category in ("categorical_representation", "class_imbalance"):
