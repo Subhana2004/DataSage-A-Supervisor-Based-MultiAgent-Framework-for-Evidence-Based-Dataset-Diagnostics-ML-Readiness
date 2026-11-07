@@ -32,3 +32,7 @@ python -m streamlit run src/datasage/dashboard.py
 ```
 
 Then click **Generate optional AI explanation** on a finding. Only its category, column name, description, aggregate metrics, validation status, and listed limitations are sent to the provider. These data may still be sensitive. This is a separately billed external API request. Never treat generated explanation text as independently verified scientific evidence. The tool does not silently call an LLM when processing uploads. The model can be changed with the `DATASAGE_LLM_MODEL` environment variable.
+
+## Adaptive follow-up stage
+
+The optional JSON prediction context can provide independently recorded availability timestamps and missing-value reason columns. The local supervisor selects eligible probes automatically; the LLM-guided selector is explicitly opt-in and never uploads raw rows. The dashboard displays selected follow-ups, observed evidence and unresolved assumptions separately from numerically validated findings. See [adaptive-investigations.md](adaptive-investigations.md).
