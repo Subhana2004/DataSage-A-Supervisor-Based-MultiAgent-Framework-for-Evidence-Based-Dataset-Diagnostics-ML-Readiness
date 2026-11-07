@@ -1,0 +1,25 @@
+# Deploy using the Render account that signs in and authorizes this repository.
+# This file does not determine account ownership.
+services:
+  - type: web
+    name: datasage-subhana-studio
+    runtime: python
+    plan: free
+    region: singapore
+    repo: https://github.com/Subhana2004/DataSage-A-Supervisor-Based-MultiAgent-Framework-for-Evidence-Based-Dataset-Diagnostics-ML-Readiness
+    branch: main
+    autoDeployTrigger: checksPass
+    buildCommand: pip install -e ".[dashboard]"
+    startCommand: streamlit run src/datasage/dashboard.py --server.headless true --server.address 0.0.0.0 --server.port $PORT
+    healthCheckPath: /_stcore/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.11"
+      - key: DATASAGE_PUBLIC_DEMO
+        value: "1"
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: STREAMLIT_SERVER_MAX_UPLOAD_SIZE
+        value: "2"
+      - key: STREAMLIT_BROWSER_GATHER_USAGE_STATS
+        value: "false"
