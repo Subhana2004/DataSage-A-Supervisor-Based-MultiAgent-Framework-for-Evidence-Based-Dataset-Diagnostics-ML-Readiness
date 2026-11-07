@@ -18,6 +18,12 @@ from datasage.llm_explanations import explain_with_llm
 from datasage.reporting import render_html
 from datasage.workflow import build_workflow
 
+# Public deployments must not persist visitors' reports on a shared host.
+PUBLIC_DEMO = os.getenv("DATASAGE_PUBLIC_DEMO") == "1"
+PUBLIC_LIMIT_BYTES = 2 * 1024 * 1024
+PUBLIC_MAX_ROWS = 20000
+PUBLIC_MAX_COLUMNS = 100
+
 
 def analyze_upload(uploaded_bytes: bytes, filename: str, target_column: str | None = None,
                    prediction_context: str | None = None, investigation_mode: str = "rules") -> dict:
@@ -27,10 +33,14 @@ def analyze_upload(uploaded_bytes: bytes, filename: str, target_column: str | No
         raise ValueError("Unsupported file format")
     if len(uploaded_bytes) > MAX_BYTES:
         raise ValueError("File exceeds 50 MiB limit")
+    if PUBLIC_DEMO and (suffix != ".csv" or len(uploaded_bytes) > PUBLIC_LIMIT_BYTES):
+        raise ValueError("Public demo accepts CSV files up to 2 MiB")
     with tempfile.TemporaryDirectory(prefix="datasage-") as folder:
         path = Path(folder) / ("upload" + suffix)
         path.write_bytes(uploaded_bytes)
         frame, _ = load_dataset(path)
+        if PUBLIC_DEMO and (len(frame) > PUBLIC_MAX_ROWS or len(frame.columns) > PUBLIC_MAX_COLUMNS):
+            raise ValueError("Public demo limit: 20,000 rows and 100 columns")
         if target_column is not None and target_column not in frame.columns:
             raise ValueError("Target column absent")
         state = {"dataset_path": str(path)}
@@ -68,14 +78,18 @@ def main() -> None:
     """, unsafe_allow_html=True)
     st.title("DataSage | Dataset Health Studio")
     st.caption("Evidence-based dataset diagnostics · statistical evidence is not proof of a dataset defect.")
-    uploaded = st.file_uploader("Upload CSV, XLSX or Parquet (max 50 MiB)",
-                                type=["csv", "xlsx", "parquet"])
+    if PUBLIC_DEMO:
+        st.warning("Public demo: upload non-sensitive CSV files only (2 MiB, 20,000 rows, 100 columns max). Reports are session-only and not saved to the server. Do not upload confidential information.")
+    uploaded = st.file_uploader(
+        "Upload CSV (public demo, max 2 MiB)" if PUBLIC_DEMO else "Upload CSV, XLSX or Parquet (max 50 MiB)",
+        type=["csv"] if PUBLIC_DEMO else ["csv", "xlsx", "parquet"]
+    )
     if uploaded is None:
         st.info("Upload a dataset to begin.")
         return
     raw = uploaded.getvalue()
-    if len(raw) > MAX_BYTES:
-        st.error("File exceeds the 50 MiB limit.")
+    if len(raw) > MAX_BYTES or (PUBLIC_DEMO and len(raw) > PUBLIC_LIMIT_BYTES):
+        st.error("File exceeds the public 2 MiB limit." if PUBLIC_DEMO else "File exceeds the 50 MiB limit.")
         return
     # Select columns using existing ingestion, rather than guessing CSV schema.
     try:
@@ -86,6 +100,8 @@ def main() -> None:
             path = Path(folder) / ("preview" + suffix)
             path.write_bytes(raw)
             preview, metadata = load_dataset(path)
+            if PUBLIC_DEMO and (len(preview) > PUBLIC_MAX_ROWS or len(preview.columns) > PUBLIC_MAX_COLUMNS):
+                raise ValueError("Public demo limit: 20,000 rows and 100 columns")
             columns = list(preview.columns)
     except (ValueError, OSError, UnicodeError, ImportError, KeyError) as exc:
         st.error(f"Unable to read dataset: {exc}")
@@ -110,6 +126,7 @@ def main() -> None:
     )
     planner_label = st.selectbox(
         "Follow-up investigation supervisor",
+        ["Evidence-driven local checks (no API)"] if PUBLIC_DEMO else
         ["Evidence-driven local checks (no API)", "LLM-guided selection (opt-in API)"]
     )
     investigation_mode = "llm" if planner_label.startswith("LLM") else "rules"
@@ -172,7 +189,7 @@ def main() -> None:
             st.markdown("**What to check next**")
             st.write(explanation["next_step"])
             st.caption(f"Status: {item['validation_status']} · Severity: {item['severity']} · Confidence: {item['confidence']}")
-            if os.getenv("OPENAI_API_KEY"):
+            if not PUBLIC_DEMO and os.getenv("OPENAI_API_KEY"):
                 if st.button("Generate optional AI explanation", key=f"llm-{metadata.fingerprint}-{target}-{item['finding_id']}"):
                     try:
                         st.session_state[f"llm_text_{metadata.fingerprint}_{target}_{item['finding_id']}"] = explain_with_llm(item)
@@ -208,22 +225,23 @@ def main() -> None:
         with st.expander(f"Run {index + 1} · {entry['file']} · Target: {entry['target']}"):
             st.write(overall_summary(entry["report"]))
             st.caption(f"Dataset fingerprint: {entry['fingerprint'][:16]}…")
-    st.markdown("**Save an investigation permanently (local device only)**")
-    st.caption("Opt-in: saves report metadata, findings and metrics to your computer, not the raw dataset. Do not use on shared machines with confidential data.")
-    if st.button("Save this report on my computer"):
-        try:
-            save_investigation(report, uploaded.name, target)
-            st.success("Saved locally. You can reopen it under Saved investigations.")
-        except (ValueError, OSError, TypeError) as exc:
-            st.error(f"Save failed: {exc}")
-    if st.checkbox("Show saved investigations"):
-        for record in list_investigations():
-            with st.expander(f"{record['saved_at_utc'][:16]} · {record['source_filename']} · {record['target'] or '(No target)'}"):
-                st.write(overall_summary(record["report"]))
-                st.download_button("Download this saved report",
-                    data=json.dumps(record["report"], indent=2, ensure_ascii=False),
-                    file_name=f"datasage-saved-{record['id']}.json", mime="application/json",
-                    key=f"saved-{record['id']}")
+    if not PUBLIC_DEMO:
+        st.markdown("**Save an investigation permanently (local device only)**")
+        st.caption("Opt-in: saves report metadata, findings and metrics to your computer, not the raw dataset. Do not use on shared machines with confidential data.")
+        if st.button("Save this report on my computer"):
+            try:
+                save_investigation(report, uploaded.name, target)
+                st.success("Saved locally. You can reopen it under Saved investigations.")
+            except (ValueError, OSError, TypeError) as exc:
+                st.error(f"Save failed: {exc}")
+        if st.checkbox("Show saved investigations"):
+            for record in list_investigations():
+                with st.expander(f"{record['saved_at_utc'][:16]} · {record['source_filename']} · {record['target'] or '(No target)'}"):
+                    st.write(overall_summary(record["report"]))
+                    st.download_button("Download this saved report",
+                        data=json.dumps(record["report"], indent=2, ensure_ascii=False),
+                        file_name=f"datasage-saved-{record['id']}.json", mime="application/json",
+                        key=f"saved-{record['id']}")
     st.subheader("5 · Export")
     st.caption("Read the HTML report, or export JSON for reproducibility.")
     st.download_button("Download JSON report",
