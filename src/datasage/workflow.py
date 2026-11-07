@@ -6,6 +6,7 @@ from typing import Annotated, Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from datasage.adaptive_investigation import plan_followups, run_followups
 from datasage.anomaly import anomaly_findings
 from datasage.distribution import distribution_findings
 from datasage.ingestion import load_dataset
@@ -23,6 +24,11 @@ class InvestigationState(TypedDict, total=False):
     target_column: str | None
     prediction_context: str | None
     investigation_plan: list[str]
+    investigation_mode: str
+    follow_up_plan: list[str]
+    follow_up_reason: str
+    follow_up_source: str
+    follow_up_results: list[dict[str, Any]]
     completed_agents: Annotated[list[str], operator.add]
     profiling_result: dict[str, Any]
     findings: Annotated[list[dict[str, Any]], operator.add]
@@ -92,13 +98,38 @@ def ml_risk(state: InvestigationState) -> InvestigationState:
     }
 
 
+def select_followups(state: InvestigationState) -> InvestigationState:
+    """Second-stage supervisor selects optional tests from *actual* observations."""
+    frame, _ = load_dataset(state["dataset_path"])
+    plan = plan_followups(
+        frame, state.get("findings", []), state.get("target_column"),
+        state.get("prediction_context"), mode=state.get("investigation_mode", "rules")
+    )
+    return {
+        "follow_up_plan": plan["selected"],
+        "follow_up_source": plan["source"],
+        "follow_up_reason": plan["reason"],
+    }
+
+
+def execute_followups(state: InvestigationState) -> InvestigationState:
+    """Execute only the supervisor-approved evidence checks."""
+    selected = state.get("follow_up_plan", [])
+    if not selected:
+        return {"follow_up_results": []}
+    frame, _ = load_dataset(state["dataset_path"])
+    return {"follow_up_results": run_followups(
+        frame, state.get("findings", []), state.get("prediction_context"), selected
+    )}
+
+
 def core_diagnostics_complete(state: InvestigationState) -> InvestigationState:
     """Barrier: all independent diagnostic branches must finish before validation."""
     return {"status": "core_diagnostics_complete"}
 
 
 def route_risk(state: InvestigationState) -> str:
-    return "ml_risk" if state.get("target_column") is not None else "validation"
+    return "ml_risk" if state.get("target_column") is not None else "follow_up_supervisor"
 
 
 def validate(state: InvestigationState) -> InvestigationState:
@@ -115,6 +146,12 @@ def report(state: InvestigationState) -> InvestigationState:
     findings = [Finding.model_validate(f) for f in state.get("findings", [])]
     output = reconcile(findings, state.get("validation_results", []),
                        state.get("dataset_metadata"))
+    output["follow_up_investigations"] = state.get("follow_up_results", [])
+    output["follow_up_plan"] = state.get("follow_up_plan", [])
+    output["follow_up_planner"] = {
+        "source": state.get("follow_up_source", "evidence_rules"),
+        "reason": state.get("follow_up_reason", ""),
+    }
     return {
         "final_report": output,
         "completed_agents": ["reporting"],
@@ -132,6 +169,8 @@ def build_workflow():
     graph.add_node("distribution", distribution)
     graph.add_node("ml_risk", ml_risk)
     graph.add_node("core_barrier", core_diagnostics_complete)
+    graph.add_node("follow_up_supervisor", select_followups)
+    graph.add_node("focused_investigation", execute_followups)
     graph.add_node("validation", validate)
     graph.add_node("reporting", report)
     graph.add_edge(START, "ingest")
@@ -141,7 +180,9 @@ def build_workflow():
         graph.add_edge("supervisor", node)
     graph.add_edge(["profiling", "missingness", "anomaly", "distribution"], "core_barrier")
     graph.add_conditional_edges("core_barrier", route_risk)
-    graph.add_edge("ml_risk", "validation")
+    graph.add_edge("ml_risk", "follow_up_supervisor")
+    graph.add_edge("follow_up_supervisor", "focused_investigation")
+    graph.add_edge("focused_investigation", "validation")
     graph.add_edge("validation", "reporting")
     graph.add_edge("reporting", END)
     return graph.compile()
