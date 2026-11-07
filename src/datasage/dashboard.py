@@ -20,7 +20,7 @@ from datasage.workflow import build_workflow
 
 
 def analyze_upload(uploaded_bytes: bytes, filename: str, target_column: str | None = None,
-                   prediction_context: str | None = None) -> dict:
+                   prediction_context: str | None = None, investigation_mode: str = "rules") -> dict:
     """Analyze uploaded bytes using existing read-only workflow."""
     suffix = Path(filename).suffix.lower()
     if suffix not in SUPPORTED:
@@ -38,6 +38,7 @@ def analyze_upload(uploaded_bytes: bytes, filename: str, target_column: str | No
             state["target_column"] = target_column
         if prediction_context:
             state["prediction_context"] = prediction_context
+        state["investigation_mode"] = investigation_mode
         return build_workflow().invoke(state)["final_report"]
 
 
@@ -98,15 +99,29 @@ def main() -> None:
     target = st.selectbox("Prediction target (optional)", [None] + columns,
                           format_func=lambda value: "(No target)" if value is None else str(value))
     st.caption("Selecting a target activates limited additional checks; it does not guarantee more findings.")
-    context = st.text_area("Prediction context (optional)",
-                           placeholder="Describe what is known at prediction time.")
+    context = st.text_area(
+        "Prediction context / source evidence (optional)",
+        placeholder='Describe prediction-time information, or supply JSON evidence metadata.',
+        help=('For independently checkable evidence, use JSON such as '
+              '{"prediction_time_column":"prediction_at",'
+              '"feature_time_columns":{"outcome_proxy":"outcome_proxy_recorded_at"},'
+              '"missing_reason_columns":{"income":"income_missing_reason"}}. '
+              "Timestamps and source-reason labels must be audited independently.")
+    )
+    planner_label = st.selectbox(
+        "Follow-up investigation supervisor",
+        ["Evidence-driven local checks (no API)", "LLM-guided selection (opt-in API)"]
+    )
+    investigation_mode = "llm" if planner_label.startswith("LLM") else "rules"
+    if investigation_mode == "llm" and not os.getenv("OPENAI_API_KEY"):
+        st.warning("LLM planning requires OPENAI_API_KEY. Choose local checks without a key.")
     # Without user action, do not run repeated computations on each filter change.
     if st.button("Run diagnostics", type="primary"):
         try:
             report = analyze_upload(raw, uploaded.name,
-                                    target, context)
+                                    target, context, investigation_mode)
             st.session_state["datasage_report"] = report
-            st.session_state["datasage_file"] = (uploaded.name, metadata.fingerprint, target, context)
+            st.session_state["datasage_file"] = (uploaded.name, metadata.fingerprint, target, context, investigation_mode)
             history = st.session_state.setdefault("datasage_history", [])
             history.insert(0, {
                 "file": uploaded.name, "fingerprint": metadata.fingerprint,
@@ -117,7 +132,7 @@ def main() -> None:
         except (ValueError, OSError, UnicodeError, KeyError, TypeError) as exc:
             st.error(f"Analysis failed: {exc}")
             return
-    if st.session_state.get("datasage_file") != (uploaded.name, metadata.fingerprint, target, context):
+    if st.session_state.get("datasage_file") != (uploaded.name, metadata.fingerprint, target, context, investigation_mode):
         st.info("Run diagnostics to view findings for this dataset.")
         return
     report = st.session_state.get("datasage_report")
@@ -170,7 +185,24 @@ def main() -> None:
                 st.json(item["evidence"])
                 st.write("Validation:", item["validation_reason"])
                 st.write("Limitations:", item.get("limitations", []))
-    st.subheader("3 · Recent investigations")
+    st.subheader("3 · Focused follow-up investigations")
+    selected_checks = report.get("follow_up_plan", [])
+    planner = report.get("follow_up_planner", {})
+    if selected_checks:
+        st.caption("Supervisor: " + planner.get("source", "evidence_rules")
+                   + " · Selected: " + ", ".join(selected_checks))
+        st.write(planner.get("reason", ""))
+        for item in report.get("follow_up_investigations", []):
+            with st.expander(item["check"].replace("_", " ").title()
+                             + " · " + item["status"].replace("_", " ")):
+                st.write(item["interpretation"])
+                st.write("What to check next:", item["next_step"])
+                st.json(item["observations"])
+    else:
+        st.info("No additional evidence-driven checks were eligible for this dataset.")
+    st.caption("A timestamp comparison or recorded collection reason is not proof of causal leakage or a missingness mechanism.")
+
+    st.subheader("4 · Recent investigations")
     st.caption("History is kept only in this browser session, not permanently saved.")
     for index, entry in enumerate(st.session_state.get("datasage_history", [])):
         with st.expander(f"Run {index + 1} · {entry['file']} · Target: {entry['target']}"):
@@ -192,7 +224,7 @@ def main() -> None:
                     data=json.dumps(record["report"], indent=2, ensure_ascii=False),
                     file_name=f"datasage-saved-{record['id']}.json", mime="application/json",
                     key=f"saved-{record['id']}")
-    st.subheader("4 · Export")
+    st.subheader("5 · Export")
     st.caption("Read the HTML report, or export JSON for reproducibility.")
     st.download_button("Download JSON report",
                        data=json.dumps(report, indent=2, ensure_ascii=False),

@@ -20,3 +20,9 @@ DataSage is designed to investigate dataset quality risks with specialized diagn
 6. Controlled research evaluation and baselines
 
 The initial implementation is developed in feature branches and reviewed through pull requests.
+
+## Evidence-driven follow-up investigations
+
+After the existing parallel core diagnostics, DataSage can choose targeted follow-up checks from observed findings. The default supervisor runs locally using evidence-driven rules; an optional **LLM-guided planner** selects only permitted checks when explicitly enabled in the dashboard with `OPENAI_API_KEY`.
+
+Focused checks review prediction-time feature timestamps, recorded missing-value reasons, and target-proxy risk signals. They report evidence, unsupported assumptions, and the next source logs needed; **they do not claim to prove missingness causality or target leakage from observations alone**. See [adaptive investigation documentation](docs/adaptive-investigations.md) for an example JSON evidence specification and exact safety limits.
